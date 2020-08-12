@@ -1,6 +1,6 @@
 
 
-# 压缩多文件 Example
+# 带压缩密码的多文件压缩解压完整例子
 ```
 package main
 
@@ -28,7 +28,6 @@ func main() {
 		fmt.Println(err)
 	}
 
-	fmt.Println(IsZip("/mnt/demo.zip"))
 }
 
 func IsZip(zipPath string) bool {
@@ -46,7 +45,11 @@ func IsZip(zipPath string) bool {
 	return bytes.Equal(buf, []byte("PK\x03\x04"))
 }
 
+// password值可以为空""
 func Zip(zipPath, password string, fileList []string) error {
+	if len(fileList) < 1 {
+		return fmt.Errorf("将要压缩的文件列表不能为空")
+	}
 	fz, err := os.Create(zipPath)
 	if err != nil {
 		return err
@@ -81,7 +84,12 @@ func Zip(zipPath, password string, fileList []string) error {
 	return zw.Flush()
 }
 
+// password值可以为空""
+// 当decompressPath值为"./"时，解压到相对路径
 func UnZip(zipPath, password, decompressPath string) error {
+	if !IsZip(zipPath) {
+		return fmt.Errorf("压缩文件格式不正确或已损坏")
+	}
 	r, err := zip.OpenReader(zipPath)
 	if err != nil {
 		return err
