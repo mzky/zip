@@ -97,8 +97,12 @@ func UnZip(zipPath, password, decompressPath string) error {
 	defer r.Close()
 
 	for _, f := range r.File {
-		if f.IsEncrypted() {
-			f.SetPassword(password)
+		if password != "" {
+			if f.IsEncrypted() {
+				f.SetPassword(password)
+			} else {
+				return errors.New("must be encrypted")
+			}
 		}
 		fp := filepath.Join(decompressPath, f.Name)
 		dir, _ := filepath.Split(fp)
