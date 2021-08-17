@@ -1,34 +1,47 @@
 
 
 # 带压缩密码的多文件压缩解压完整例子
+支持文件和目录压缩
 ```
 package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/mzky/zip"
 )
 
+
 func main() {
 	var array []string
-	array = append(array, "/mnt/k/v")
-	array = append(array, "/mnt/a/b")
-	err := Zip("/mnt/demo.zip", "1", array)
-	if err != nil {
-		fmt.Println(err)
+	array = append(array, "/mnt/keepalived-1.4.5.tar.gz") //　待压缩文件
+	if fileList, err := FileListFromPath(filepath.Dir("/mnt/popt-1.18/")); err == nil {//　待压缩目录
+		array = append(array, fileList...)
 	}
-	// err = UnZip("/mnt/demo.zip", "1", "./") //解压相对路径
-	err = UnZip("/mnt/demo.zip", "1", "/")
-	if err != nil {
-		fmt.Println(err)
-	}
+	fmt.Println("待压缩低文件列表：","\n"+strings.Join(array,"\n"))
 
+	err := Zip("/mnt/demo.zip", "abc123~!@", array)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println("完成压缩！")
+
+	// err = UnZip("/mnt/demo.zip", "1", "./") //解压相对路径
+	err = UnZip("/mnt/demo.zip", "abc123~!@", "/")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println("解压完成！")
 }
+
 
 func IsZip(zipPath string) bool {
 	f, err := os.Open(zipPath)
@@ -45,50 +58,100 @@ func IsZip(zipPath string) bool {
 	return bytes.Equal(buf, []byte("PK\x03\x04"))
 }
 
-// password值可以为空""
-func Zip(zipPath, password string, fileList []string) error {
-	if len(fileList) < 1 {
-		return fmt.Errorf("将要压缩的文件列表不能为空")
+// FileIsExist 判断文件夹或文件是否存在, true为存在
+func FileIsExist(fp string) bool {
+	_, err := os.Stat(fp)
+	return err == nil || os.IsExist(err)
+}
+
+// FileListFromPath 获取文件夹下文件列表，支持通配符*
+func FileListFromPath(fp string) ([]string, error) {
+	var fileList []string
+	var err error
+	if strings.Contains(fp, "*") {
+		fileList, err = filepath.Glob(fp)
+	} else {
+		fileList, err = filepath.Glob(filepath.Join(fp, "*"))
 	}
+
+	for _, v := range fileList {
+		if !IsFile(v) {
+			fileList = TrimValueFromArray(fileList, v) // 删除此目录项
+			fl, _ := FileListFromPath(v)
+			fileList = append(fileList, fl...)
+		}
+	}
+	return fileList, err
+}
+
+// IsFile 判断是文件还是目录
+func IsFile(fp string) bool {
+	fi, e := os.Stat(fp)
+	if e != nil {
+		return false
+	}
+	return !fi.IsDir()
+}
+
+// TrimValueFromArray 去除数组中指定元素
+func TrimValueFromArray(strArray []string, trimValue string) []string {
+	newArray := make([]string, 0)
+	for _, v := range strArray {
+		if strings.TrimSpace(trimValue) != strings.TrimSpace(v) {
+			newArray = append(newArray, strings.TrimSpace(v))
+		}
+	}
+
+	return newArray
+}
+
+// Zip password值可以为空""
+func Zip(zipPath, password string, fileList []string) error {
 	fz, err := os.Create(zipPath)
 	if err != nil {
 		return err
 	}
+	defer fz.Close()
 	zw := zip.NewWriter(fz)
 	defer zw.Close()
 
 	for _, fileName := range fileList {
-		fr, err := os.Open(fileName)
-		if err != nil {
-			return err
+		fr, errA := os.Open(fileName)
+		if errA != nil {
+			return errA
 		}
 
 		// 写入文件的头信息
 		var w io.Writer
+		var errB error
 		if password != "" {
-			w, err = zw.Encrypt(fileName, password, zip.AES256Encryption)
+			w, errB = zw.Encrypt(fileName, password, zip.AES256Encryption)
 		} else {
-			w, err = zw.Create(fileName)
+			w, errB = zw.Create(fileName)
 		}
 
-		if err != nil {
-			return err
+		if errB != nil {
+			return errB
 		}
 
 		// 写入文件内容
-		_, err = io.Copy(w, fr)
-		if err != nil {
-			return err
+		_, errC := io.Copy(w, fr)
+		if errC != nil {
+			return errC
 		}
+		fr.Close()
 	}
 	return zw.Flush()
 }
 
-// password值可以为空""
+// UnZip password值可以为空""
 // 当decompressPath值为"./"时，解压到相对路径
 func UnZip(zipPath, password, decompressPath string) error {
+	if !FileIsExist(zipPath){
+		return errors.New("找不到压缩文件")
+	}
 	if !IsZip(zipPath) {
-		return fmt.Errorf("压缩文件格式不正确或已损坏")
+		return errors.New("压缩文件格式不正确或已损坏")
 	}
 	r, err := zip.OpenReader(zipPath)
 	if err != nil {
@@ -104,27 +167,22 @@ func UnZip(zipPath, password, decompressPath string) error {
 				return errors.New("must be encrypted")
 			}
 		}
+
 		fp := filepath.Join(decompressPath, f.Name)
-		dir, _ := filepath.Split(fp)
-		err = os.MkdirAll(dir, os.ModePerm)
-		if err != nil {
-			return err
-		}
+		_ = os.MkdirAll(filepath.Dir(fp), os.ModePerm)
 
-		w, err := os.Create(fp)
-		if nil != err {
-			return err
+		w, errA := os.Create(fp)
+		if errA!=nil{
+			return errors.New("无法创建解压文件")
 		}
-
-		fr, err := f.Open()
-		if err != nil {
-			return err
+		fr, errB := f.Open()
+		if errB!=nil{
+			return errors.New("解压密码不正确")
 		}
-
-		_, err = io.Copy(w, fr)
-		if err != nil {
-			return err
+		if _, errC := io.Copy(w, fr); errC != nil {
+			return errC
 		}
+		fr.Close()
 		w.Close()
 	}
 	return nil
